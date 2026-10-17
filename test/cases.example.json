@@ -1,0 +1,6 @@
+[
+  { "name": "2a03-1", "path": "/path/to/a-2a03-file.nsf", "track": 0, "seconds": 6, "rate": 44100 },
+  { "name": "2a03-1-48k", "path": "/path/to/a-2a03-file.nsf", "track": 0, "seconds": 3, "rate": 48000 },
+  { "name": "fds-1", "path": "/path/to/an-fds-file.nsf", "track": 0, "seconds": 6, "rate": 44100 },
+  { "name": "vrc6-1", "path": "/path/to/a-vrc6-file.nsf", "track": 0, "seconds": 4, "rate": 44100 }
+]
