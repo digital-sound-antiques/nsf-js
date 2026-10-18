@@ -12,7 +12,7 @@
 
 import { CPU6502, type CPUState } from "./cpu6502.js";
 import { NSFBus } from "./bus.js";
-import { NTSC_CPU_CLOCK, PAL_CPU_CLOCK, mixAPU } from "./apu.js";
+import { NTSC_CPU_CLOCK, PAL_CPU_CLOCK, PULSE_MIX, mixAPU } from "./apu.js";
 import {
   CIC_RATIO,
   CicDecimator,
@@ -59,7 +59,7 @@ const DEFAULT_PLAY_SECONDS = 150;
 const DEFAULT_FADE_SECONDS = 5;
 
 /** Channels in the order they appear in {@link NSFPlayer.channelCapture}. */
-export const CHANNEL_COUNT = 23;
+export const CHANNEL_COUNT = 26;
 export const CH_PULSE1 = 0;
 export const CH_PULSE2 = 1;
 export const CH_TRIANGLE = 2;
@@ -75,6 +75,10 @@ const VRC7_CHANNELS = 6;
 /** First of the N163's eight wavetable channels; channel 8 is the last. */
 export const CH_N163 = 15;
 const N163_CHANNELS = 8;
+/** The MMC5's two pulses and its PCM channel. */
+export const CH_MMC5_PULSE1 = 23;
+export const CH_MMC5_PULSE2 = 24;
+export const CH_MMC5_PCM = 25;
 
 export type ChannelKind =
   | "pulse"
@@ -85,7 +89,9 @@ export type ChannelKind =
   | "vrc6-pulse"
   | "vrc6-saw"
   | "vrc7"
-  | "n163";
+  | "n163"
+  | "mmc5-pulse"
+  | "mmc5-pcm";
 
 export interface ChannelStatus {
   index: number;
@@ -124,6 +130,7 @@ export interface NSFPlayerState {
   vrc6: unknown;
   vrc7: unknown;
   n163: unknown;
+  mmc5: unknown;
   ram: Uint8Array;
   /** The banks a driver can write to, and which bank each one is. */
   banks: { bank: number; data: Uint8Array }[];
@@ -442,6 +449,7 @@ export class NSFPlayer {
     const vrc6 = bus.vrc6;
     const vrc7 = bus.vrc7;
     const n163 = bus.n163;
+    const mmc5 = bus.mmc5;
     // Per-channel accumulation only earns its cost when something is actually
     // going to look at the waveforms.
     const capture = this.channelCaptureEnabled;
@@ -469,6 +477,10 @@ export class NSFPlayer {
         const v = n163.cyclesToEvent();
         if (v < step) step = v;
       }
+      if (mmc5 != null) {
+        const v = mmc5.cyclesToEvent();
+        if (v < step) step = v;
+      }
       if (step > remaining) step = remaining;
       if (step > this.advanceLimit) step = this.advanceLimit;
       if (step < 1) step = 1;
@@ -482,6 +494,7 @@ export class NSFPlayer {
       if (vrc6 != null) vrc6.advance(step);
       if (vrc7 != null) vrc7.advance(step);
       if (n163 != null) n163.clock(step);
+      if (mmc5 != null) mmc5.advance(step);
       remaining -= step;
 
       this.refreshMix();
@@ -555,6 +568,22 @@ export class NSFPlayer {
         n163Changed = true;
       }
     }
+    const mmc5 = bus.mmc5;
+    let mmc5Changed = false;
+    if (mmc5 != null) {
+      const m1 = mmc5.pulse1.output;
+      const m2 = mmc5.pulse2.output;
+      const mp = mmc5.pcm;
+      chLast[CH_MMC5_PULSE1] = m1;
+      chLast[CH_MMC5_PULSE2] = m2;
+      chLast[CH_MMC5_PCM] = mp;
+      if (m1 !== last[CH_MMC5_PULSE1] || m2 !== last[CH_MMC5_PULSE2] || mp !== last[CH_MMC5_PCM]) {
+        last[CH_MMC5_PULSE1] = m1;
+        last[CH_MMC5_PULSE2] = m2;
+        last[CH_MMC5_PCM] = mp;
+        mmc5Changed = true;
+      }
+    }
     // The FDS output is a float, so it is compared as a scaled integer; a
     // difference too small to survive that is too small to hear.
     const fdsLevel = fds != null ? (fdsOut * 65536) | 0 : 0;
@@ -562,6 +591,7 @@ export class NSFPlayer {
       !force &&
       !vrc7Changed &&
       !n163Changed &&
+      !mmc5Changed &&
       p1 === last[0] &&
       p2 === last[1] &&
       tri === last[2] &&
@@ -608,6 +638,14 @@ export class NSFPlayer {
       mixed += (sum / 4096) * VRC7_MIX_LEVEL;
     }
     if (n163 != null) mixed += (this.lastN163 / 120) * N163_MIX_LEVEL;
+    if (mmc5 != null) {
+      // The same weight as the APU's own pulses and DMC, through the same kind
+      // of node, but inverted.
+      const m1 = mask & (1 << CH_MMC5_PULSE1) ? 0 : mmc5.pulse1.output;
+      const m2 = mask & (1 << CH_MMC5_PULSE2) ? 0 : mmc5.pulse2.output;
+      const pcm = mask & (1 << CH_MMC5_PCM) ? 0 : mmc5.pcm / 22638;
+      mixed -= PULSE_MIX[m1 + m2] + (159.79 * pcm) / (1 + 100 * pcm);
+    }
     this.lastMixed = mixed;
   }
 
@@ -691,7 +729,7 @@ export class NSFPlayer {
   /** Full-scale value of each channel's own DAC, for normalising the capture. */
   private static readonly CH_SCALE = [
     15, 15, 15, 15, 127, 1, 15, 15, 31, 4096, 4096, 4096, 4096, 4096, 4096,
-    120, 120, 120, 120, 120, 120, 120, 120,
+    120, 120, 120, 120, 120, 120, 120, 120, 15, 15, 255,
   ];
 
   private captureChannels(): void {
@@ -1045,6 +1083,38 @@ export class NSFPlayer {
           keyOnCount: fds.keyOnCount,
         };
       }
+      case CH_MMC5_PULSE1:
+      case CH_MMC5_PULSE2: {
+        const mmc5 = bus?.mmc5;
+        if (mmc5 == null) return { ...base, kind: "mmc5-pulse" };
+        const ch = index === CH_MMC5_PULSE1 ? mmc5.pulse1 : mmc5.pulse2;
+        const level = ch.length > 0 ? ch.env.volume : 0;
+        return {
+          ...base,
+          kind: "mmc5-pulse",
+          // Unlike the APU's, an MMC5 pulse plays even its shortest periods.
+          active: level > 0,
+          level: level / 15,
+          note: this.noteFromFrequency(this.cpuClock / (16 * (ch.period + 1))),
+          period: ch.period,
+          detail: ch.duty,
+          keyOnCount: ch.keyOnCount,
+        };
+      }
+      case CH_MMC5_PCM: {
+        const mmc5 = bus?.mmc5;
+        if (mmc5 == null) return { ...base, kind: "mmc5-pcm" };
+        return {
+          ...base,
+          kind: "mmc5-pcm",
+          active: mmc5.pcmActive,
+          level: mmc5.pcm / 255,
+          note: null,
+          period: 0,
+          detail: mmc5.pcmReadMode ? 1 : 0,
+          keyOnCount: mmc5.pcmWriteCount,
+        };
+      }
       default: {
         if (index >= CH_N163 && index < CH_N163 + N163_CHANNELS) {
           const ch = index - CH_N163;
@@ -1112,6 +1182,7 @@ export class NSFPlayer {
       vrc6: bus.vrc6 != null ? snapshot(bus.vrc6) : null,
       vrc7: bus.vrc7 != null ? snapshot(bus.vrc7) : null,
       n163: bus.n163 != null ? snapshot(bus.n163) : null,
+      mmc5: bus.mmc5 != null ? snapshot(bus.mmc5) : null,
       ram: bus.ram.slice(),
       banks: bus.writableBanks().map((bank) => ({ bank, data: bus.bankData(bank).slice() })),
       bankMap: bus.bankMap.slice(),
@@ -1135,6 +1206,7 @@ export class NSFPlayer {
     if (bus.vrc6 != null && state.vrc6 != null) restore(bus.vrc6, state.vrc6);
     if (bus.vrc7 != null && state.vrc7 != null) restore(bus.vrc7, state.vrc7);
     if (bus.n163 != null && state.n163 != null) restore(bus.n163, state.n163);
+    if (bus.mmc5 != null && state.mmc5 != null) restore(bus.mmc5, state.mmc5);
     bus.ram.set(state.ram);
     for (const { bank, data } of state.banks) bus.bankData(bank).set(data);
     bus.bankMap.set(state.bankMap);

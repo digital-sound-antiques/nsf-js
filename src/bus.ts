@@ -16,6 +16,7 @@ import { FDS } from "./fds.js";
 import { VRC6 } from "./vrc6.js";
 import { VRC7 } from "./vrc7.js";
 import { N163 } from "./n163.js";
+import { MMC5 } from "./mmc5.js";
 import type { Bus6502 } from "./cpu6502.js";
 import type { NSFFile } from "./nsf-file.js";
 
@@ -28,6 +29,7 @@ export class NSFBus implements Bus6502, DMCHost {
   readonly vrc6: VRC6 | null;
   readonly vrc7: VRC7 | null;
   readonly n163: N163 | null;
+  readonly mmc5: MMC5 | null;
 
   /** Pages of the file image, as the driver currently sees them. */
   private pages: Uint8Array[] = [];
@@ -60,6 +62,7 @@ export class NSFBus implements Bus6502, DMCHost {
     this.vrc6 = this.hasVRC6 ? new VRC6() : null;
     this.vrc7 = file.chips.vrc7 ? new VRC7(pal) : null;
     this.n163 = file.chips.n163 ? new N163() : null;
+    this.mmc5 = file.chips.mmc5 ? new MMC5() : null;
     this.buildPages();
     this.reset();
   }
@@ -110,6 +113,7 @@ export class NSFBus implements Bus6502, DMCHost {
     // so it is reset outright.
     this.vrc7?.reset();
     this.n163?.reset();
+    this.mmc5?.reset();
     for (let i = 0; i < this.pages.length; i++) this.pages[i].set(this.pristine[i]);
 
     for (let p = 0; p < 16; p++) this.pageBank[p] = -1;
@@ -158,9 +162,15 @@ export class NSFBus implements Bus6502, DMCHost {
     if (addr < 0x6000) {
       if (this.fds && addr >= 0x4040 && addr <= 0x409f) return this.fds.read(addr);
       if (this.n163 && addr >= 0x4800 && addr < 0x5000) return this.n163.readData();
+      if (this.mmc5 && MMC5.handles(addr)) return this.mmc5.read(addr);
       return 0;
     }
-    return this.pageOf(addr >> 12)[addr & 0x0fff];
+    const v = this.pageOf(addr >> 12)[addr & 0x0fff];
+    // In its read mode the MMC5's PCM channel takes whatever is read from here.
+    if (this.mmc5 != null && this.mmc5.pcmReadMode && addr < 0xc000 && addr >= 0x8000) {
+      this.mmc5.observeRead(v);
+    }
+    return v;
   }
 
   write(addr: number, value: number): void {
@@ -180,6 +190,10 @@ export class NSFBus implements Bus6502, DMCHost {
       }
       if (this.n163 && addr >= 0x4800 && addr < 0x5000) {
         this.n163.writeData(value);
+        return;
+      }
+      if (this.mmc5 && MMC5.handles(addr)) {
+        this.mmc5.write(addr, value);
         return;
       }
       if (addr >= 0x5ff6 && addr <= 0x5fff) {

@@ -106,9 +106,11 @@ class Envelope {
   }
 }
 
-class Pulse {
+export class Pulse {
   /** True for the first pulse, whose sweep subtracts one extra. */
   private readonly isFirst: boolean;
+  /** An MMC5 pulse: no sweep unit, and no silencing of periods below 8. */
+  private readonly mmc5: boolean;
 
   enabled = false;
   duty = 0;
@@ -131,8 +133,9 @@ class Pulse {
   /** Retriggers since load: a write to the length/timer-high register. */
   keyOnCount = 0;
 
-  constructor(isFirst: boolean) {
+  constructor(isFirst: boolean, mmc5 = false) {
     this.isFirst = isFirst;
+    this.mmc5 = mmc5;
   }
 
   write(reg: number, v: number): void {
@@ -143,6 +146,7 @@ class Pulse {
         this.env.write(v);
         break;
       case 1:
+        if (this.mmc5) break; // the MMC5 has no register here
         this.sweepEnabled = (v & 0x80) !== 0;
         this.sweepPeriod = (v >> 4) & 7;
         this.sweepNegate = (v & 0x08) !== 0;
@@ -182,6 +186,7 @@ class Pulse {
   }
 
   private muted(): boolean {
+    if (this.mmc5) return false;
     if (this.period < 8) return true;
     return this.sweepTarget() > 0x7ff;
   }
@@ -797,7 +802,7 @@ export class APU {
  * The pulses' summing node, tabulated over the 31 sums the pair can produce.
  * Exact, not an approximation - the table simply enumerates the formula.
  */
-const PULSE_MIX = (() => {
+export const PULSE_MIX = (() => {
   const t = new Float64Array(31);
   for (let p = 1; p < 31; p++) t[p] = 95.88 / (8128 / p + 100);
   return t;

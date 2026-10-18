@@ -24,6 +24,9 @@ from any other emulator.
 - **N163**: up to eight wavetable channels, put out one at a time as the chip
   does, so eight-channel music keeps the whine of the switching. Mixed at a
   level measured on hardware, though the boards differ.
+- **MMC5**: both pulses, which lack the sweep and keep playing the shortest
+  periods, and the PCM channel in both modes; the extra RAM and the
+  multiplier that NSFs use the chip for too.
 - **NSF / NSFe / NSF2 containers**: bank switching, the FDS memory map, and the
   metadata chunks (per-track titles, lengths, fades, playlist).
 - **Band-limited output** at any sample rate: a cascaded-integrator decimator at
@@ -36,7 +39,7 @@ from any other emulator.
 - **Per-channel output** for visualisation, with each channel's own offset
   removed.
 
-Not implemented: MMC5 and Sunsoft 5B audio.
+Not implemented: Sunsoft 5B audio.
 
 ## Usage
 
