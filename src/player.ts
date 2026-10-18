@@ -23,6 +23,7 @@ import {
   VRC6_MIX_LEVEL,
   VRC7_MIX_LEVEL,
   N163_MIX_LEVEL,
+  S5B_MIX_LEVEL,
 } from "./mixer.js";
 import { mixVRC6 } from "./vrc6.js";
 import { Resampler } from "./resampler.js";
@@ -59,7 +60,7 @@ const DEFAULT_PLAY_SECONDS = 150;
 const DEFAULT_FADE_SECONDS = 5;
 
 /** Channels in the order they appear in {@link NSFPlayer.channelCapture}. */
-export const CHANNEL_COUNT = 26;
+export const CHANNEL_COUNT = 29;
 export const CH_PULSE1 = 0;
 export const CH_PULSE2 = 1;
 export const CH_TRIANGLE = 2;
@@ -79,6 +80,9 @@ const N163_CHANNELS = 8;
 export const CH_MMC5_PULSE1 = 23;
 export const CH_MMC5_PULSE2 = 24;
 export const CH_MMC5_PCM = 25;
+/** First of the Sunsoft 5B's three channels. */
+export const CH_S5B = 26;
+const S5B_CHANNELS = 3;
 
 export type ChannelKind =
   | "pulse"
@@ -91,7 +95,8 @@ export type ChannelKind =
   | "vrc7"
   | "n163"
   | "mmc5-pulse"
-  | "mmc5-pcm";
+  | "mmc5-pcm"
+  | "s5b";
 
 export interface ChannelStatus {
   index: number;
@@ -131,6 +136,7 @@ export interface NSFPlayerState {
   vrc7: unknown;
   n163: unknown;
   mmc5: unknown;
+  s5b: unknown;
   ram: Uint8Array;
   /** The banks a driver can write to, and which bank each one is. */
   banks: { bank: number; data: Uint8Array }[];
@@ -450,6 +456,7 @@ export class NSFPlayer {
     const vrc7 = bus.vrc7;
     const n163 = bus.n163;
     const mmc5 = bus.mmc5;
+    const s5b = bus.s5b;
     // Per-channel accumulation only earns its cost when something is actually
     // going to look at the waveforms.
     const capture = this.channelCaptureEnabled;
@@ -481,6 +488,10 @@ export class NSFPlayer {
         const v = mmc5.cyclesToEvent();
         if (v < step) step = v;
       }
+      if (s5b != null) {
+        const v = s5b.cyclesToEvent();
+        if (v < step) step = v;
+      }
       if (step > remaining) step = remaining;
       if (step > this.advanceLimit) step = this.advanceLimit;
       if (step < 1) step = 1;
@@ -495,6 +506,7 @@ export class NSFPlayer {
       if (vrc7 != null) vrc7.advance(step);
       if (n163 != null) n163.clock(step);
       if (mmc5 != null) mmc5.advance(step);
+      if (s5b != null) s5b.advance(step);
       remaining -= step;
 
       this.refreshMix();
@@ -584,6 +596,19 @@ export class NSFPlayer {
         mmc5Changed = true;
       }
     }
+    const s5b = bus.s5b;
+    let s5bChanged = false;
+    if (s5b != null) {
+      const out = s5b.out;
+      for (let i = 0; i < S5B_CHANNELS; i++) {
+        const v = out[i];
+        chLast[CH_S5B + i] = v;
+        if (v !== last[CH_S5B + i]) {
+          last[CH_S5B + i] = v;
+          s5bChanged = true;
+        }
+      }
+    }
     // The FDS output is a float, so it is compared as a scaled integer; a
     // difference too small to survive that is too small to hear.
     const fdsLevel = fds != null ? (fdsOut * 65536) | 0 : 0;
@@ -592,6 +617,7 @@ export class NSFPlayer {
       !vrc7Changed &&
       !n163Changed &&
       !mmc5Changed &&
+      !s5bChanged &&
       p1 === last[0] &&
       p2 === last[1] &&
       tri === last[2] &&
@@ -645,6 +671,15 @@ export class NSFPlayer {
       const m2 = mask & (1 << CH_MMC5_PULSE2) ? 0 : mmc5.pulse2.output;
       const pcm = mask & (1 << CH_MMC5_PCM) ? 0 : mmc5.pcm / 22638;
       mixed -= PULSE_MIX[m1 + m2] + (159.79 * pcm) / (1 + 100 * pcm);
+    }
+    if (s5b != null) {
+      // The three channels are summed linearly.
+      const out = s5b.out;
+      let sum = 0;
+      for (let i = 0; i < S5B_CHANNELS; i++) {
+        if (!(mask & (1 << (CH_S5B + i)))) sum += out[i];
+      }
+      mixed += (sum / 4080) * S5B_MIX_LEVEL;
     }
     this.lastMixed = mixed;
   }
@@ -729,7 +764,7 @@ export class NSFPlayer {
   /** Full-scale value of each channel's own DAC, for normalising the capture. */
   private static readonly CH_SCALE = [
     15, 15, 15, 15, 127, 1, 15, 15, 31, 4096, 4096, 4096, 4096, 4096, 4096,
-    120, 120, 120, 120, 120, 120, 120, 120, 15, 15, 255,
+    120, 120, 120, 120, 120, 120, 120, 120, 15, 15, 255, 4080, 4080, 4080,
   ];
 
   private captureChannels(): void {
@@ -1116,6 +1151,26 @@ export class NSFPlayer {
         };
       }
       default: {
+        if (index >= CH_S5B && index < CH_S5B + S5B_CHANNELS) {
+          const ch = index - CH_S5B;
+          const s5b = bus?.s5b;
+          if (s5b == null) return { ...base, kind: "s5b" };
+          const { period, tone, noise, volume, envelope } = s5b.channel(ch);
+          const level = envelope ? s5b.envelopeLevel / 31 : volume / 15;
+          return {
+            ...base,
+            kind: "s5b",
+            active: (tone || noise) && level > 0,
+            level,
+            // A tone toggles every period's worth of 16-cycle steps, twice a
+            // cycle; period 0 runs as 1.
+            note: tone ? this.noteFromFrequency(this.cpuClock / (32 * Math.max(1, period))) : null,
+            period,
+            // Bit 0 tone, bit 1 noise, bit 2 envelope.
+            detail: (tone ? 1 : 0) | (noise ? 2 : 0) | (envelope ? 4 : 0),
+            keyOnCount: s5b.keyOnCount[ch],
+          };
+        }
         if (index >= CH_N163 && index < CH_N163 + N163_CHANNELS) {
           const ch = index - CH_N163;
           const n163 = bus?.n163;
@@ -1183,6 +1238,7 @@ export class NSFPlayer {
       vrc7: bus.vrc7 != null ? snapshot(bus.vrc7) : null,
       n163: bus.n163 != null ? snapshot(bus.n163) : null,
       mmc5: bus.mmc5 != null ? snapshot(bus.mmc5) : null,
+      s5b: bus.s5b != null ? snapshot(bus.s5b) : null,
       ram: bus.ram.slice(),
       banks: bus.writableBanks().map((bank) => ({ bank, data: bus.bankData(bank).slice() })),
       bankMap: bus.bankMap.slice(),
@@ -1207,6 +1263,7 @@ export class NSFPlayer {
     if (bus.vrc7 != null && state.vrc7 != null) restore(bus.vrc7, state.vrc7);
     if (bus.n163 != null && state.n163 != null) restore(bus.n163, state.n163);
     if (bus.mmc5 != null && state.mmc5 != null) restore(bus.mmc5, state.mmc5);
+    if (bus.s5b != null && state.s5b != null) restore(bus.s5b, state.s5b);
     bus.ram.set(state.ram);
     for (const { bank, data } of state.banks) bus.bankData(bank).set(data);
     bus.bankMap.set(state.bankMap);

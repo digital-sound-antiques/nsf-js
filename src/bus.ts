@@ -17,6 +17,7 @@ import { VRC6 } from "./vrc6.js";
 import { VRC7 } from "./vrc7.js";
 import { N163 } from "./n163.js";
 import { MMC5 } from "./mmc5.js";
+import { S5B } from "./s5b.js";
 import type { Bus6502 } from "./cpu6502.js";
 import type { NSFFile } from "./nsf-file.js";
 
@@ -30,6 +31,7 @@ export class NSFBus implements Bus6502, DMCHost {
   readonly vrc7: VRC7 | null;
   readonly n163: N163 | null;
   readonly mmc5: MMC5 | null;
+  readonly s5b: S5B | null;
 
   /** Pages of the file image, as the driver currently sees them. */
   private pages: Uint8Array[] = [];
@@ -63,6 +65,7 @@ export class NSFBus implements Bus6502, DMCHost {
     this.vrc7 = file.chips.vrc7 ? new VRC7(pal) : null;
     this.n163 = file.chips.n163 ? new N163() : null;
     this.mmc5 = file.chips.mmc5 ? new MMC5() : null;
+    this.s5b = file.chips.s5b ? new S5B() : null;
     this.buildPages();
     this.reset();
   }
@@ -114,6 +117,7 @@ export class NSFBus implements Bus6502, DMCHost {
     this.vrc7?.reset();
     this.n163?.reset();
     this.mmc5?.reset();
+    this.s5b?.reset();
     for (let i = 0; i < this.pages.length; i++) this.pages[i].set(this.pristine[i]);
 
     for (let p = 0; p < 16; p++) this.pageBank[p] = -1;
@@ -219,6 +223,11 @@ export class NSFBus implements Bus6502, DMCHost {
         this.vrc7.write(addr, value);
         return;
       }
+    }
+    // The 5B's two ports cover the top 16 KB, as the cartridge decodes them.
+    if (this.s5b != null && addr >= 0xc000) {
+      this.s5b.write(addr, value);
+      return;
     }
     // The N163's address port is the top 2 KB, above any RAM an NSF can have.
     if (this.n163 != null && addr >= 0xf800) {

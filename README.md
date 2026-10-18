@@ -4,8 +4,9 @@ NES / Famicom sound file (`.nsf`, `.nsfe`) player library for JavaScript, writte
 from scratch in TypeScript. No WebAssembly, no native dependencies.
 
 Everything here is implemented from published hardware documentation, except the
-VRC7's FM core, which is a port of the author's own
-[emu2413](https://github.com/digital-sound-antiques/emu2413). No code is derived
+VRC7's FM core and the Sunsoft 5B, which are ports of the author's own
+[emu2413](https://github.com/digital-sound-antiques/emu2413) and
+[emu2149](https://github.com/digital-sound-antiques/emu2149). No code is derived
 from any other emulator.
 
 ## What it does
@@ -27,6 +28,10 @@ from any other emulator.
 - **MMC5**: both pulses, which lack the sweep and keep playing the shortest
   periods, and the PCM channel in both modes; the extra RAM and the
   multiplier that NSFs use the chip for too.
+- **Sunsoft 5B**: three PSG channels, a port of the author's own emu2149 run
+  the way the 5B runs it, and checked against it step for step. Mixed at the
+  level measured on hardware; the cartridge amplifier's compression at high
+  levels is not modelled.
 - **NSF / NSFe / NSF2 containers**: bank switching, the FDS memory map, and the
   metadata chunks (per-track titles, lengths, fades, playlist).
 - **Band-limited output** at any sample rate: a cascaded-integrator decimator at
@@ -39,7 +44,6 @@ from any other emulator.
 - **Per-channel output** for visualisation, with each channel's own offset
   removed.
 
-Not implemented: Sunsoft 5B audio.
 
 ## Usage
 
@@ -73,6 +77,7 @@ node test/batch.mjs  <dir> [seconds]                          # every track of e
 node test/state.mjs  <file.nsf> [track]                       # snapshot round-trip
 node test/dmc.mjs    [out.wav]                                # synthetic DMC exercise
 node test/vrc7-ref.mjs <file.nsf> [track] [seconds]           # VRC7 vs emu2413, per sample
+node test/s5b-ref.mjs  <file.nsf> [track] [seconds]           # 5B vs emu2149, per step
 ```
 
 `test/hash.mjs` is the regression check: it fingerprints the output of a list of

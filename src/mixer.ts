@@ -284,3 +284,16 @@ export const VRC7_MIX_LEVEL = 0.77;
  * 0.9375 of this scale, and a 50% APU square at 0.075 of the APU's.
  */
 export const N163_MIX_LEVEL = 0.53;
+
+/**
+ * Level the Sunsoft 5B is mixed in at, relative to the APU's own output, for
+ * its channels scaled to 0..1 each.
+ *
+ * Measured on hardware: one channel's square at volume 12 is 1.3 dB below a
+ * full-volume APU square in RMS (rainwarrior's db_5b test, NESdev forum thread
+ * 17741). Volume 12 because the cartridge's amplifier stops being linear above
+ * it; that compression is not modelled, so the loudest passages come out a
+ * little hotter than on hardware. A volume-12 square swings 0.353 of a
+ * channel's scale here, and a 50% APU square 0.149 of the APU's.
+ */
+export const S5B_MIX_LEVEL = 0.364;

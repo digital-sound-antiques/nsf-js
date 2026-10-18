@@ -11,6 +11,7 @@ export { VRC6, mixVRC6 } from "./vrc6.js";
 export { VRC7 } from "./vrc7.js";
 export { N163 } from "./n163.js";
 export { MMC5 } from "./mmc5.js";
+export { S5B } from "./s5b.js";
 export { NSFBus } from "./bus.js";
 export {
   CIC_RATIO,
@@ -21,6 +22,7 @@ export {
   VRC6_MIX_LEVEL,
   VRC7_MIX_LEVEL,
   N163_MIX_LEVEL,
+  S5B_MIX_LEVEL,
 } from "./mixer.js";
 export { Resampler } from "./resampler.js";
 export {
@@ -48,6 +50,7 @@ export {
   CH_MMC5_PULSE1,
   CH_MMC5_PULSE2,
   CH_MMC5_PCM,
+  CH_S5B,
   type ChannelKind,
   type ChannelStatus,
   type NSFPlayerOptions,
